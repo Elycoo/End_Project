@@ -15,7 +15,7 @@ import os
 plt.rcParams["font.size"] = "14"
 
 # constant
-N = 2  # 5000
+N = 5  # 5000
 M_TOT = 10**11  # Sun masses
 R_INITIAL = 50e3  # Parsec
 SOFT_PARAM = 1e3  # Parsec
@@ -292,7 +292,7 @@ if __name__ == '__main__':
     np.save(folder + 'all_pos', all_positions)
 
     new_folder_rename = folder[:-1] + f'_eps_{eps}_N_mass_{N}_repeat_ode_{n}_v_{v}_time_{time/60:.2g}_m_regular.py_/'
-    os.rename(folder, new_folder_rename)
+    os.renames(folder, new_folder_rename)
     folder = new_folder_rename
 
     # all_positions = list(np.load('all_pos.npy', allow_pickle=True))

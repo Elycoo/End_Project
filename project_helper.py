@@ -55,10 +55,14 @@ def gif(folder, name):
 
 def beep():
     # Make a beep sound
-    import winsound
     duration = 100  # milliseconds
     freq = 440  # Hz
-    winsound.Beep(freq, duration)
+    if os.name != 'posix':
+        import winsound
+        winsound.Beep(freq, duration)
+    else:
+        pass
+        # os.system('play -nq -t alsa synth {} sine {}'.format(duration//1000, freq))
 
 
 def create_folder():

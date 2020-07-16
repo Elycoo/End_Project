@@ -1,7 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.integrate import solve_ivp
-from numba import jit
+# from numba import jit
 
 plt.rcParams["font.size"] = "16"
 
