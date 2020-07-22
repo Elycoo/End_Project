@@ -9,23 +9,16 @@ using LinearAlgebra
 using Distributions
 using Random
 using Debugger
-using JLD2
 using Formatting: format
 using Dates
-using PyCall
-pygui(:qt5)
-using PyPlot
-rcParams = PyPlot.PyDict(PyPlot.matplotlib."rcParams")
-rcParams["font.size"] = "14"
+using JSON
+using Plots
+using LaTeXStrings
 
 include("StructModule.jl")
 using .StructModule
 
-# using Distributed
 @everywhere begin
-    # using Distributed
-    # include("StructModule.jl")
-    # using .StructModule
     using LinearAlgebra: norm
     using SharedArrays
     THETA = 1
@@ -34,7 +27,7 @@ using .StructModule
 end
 
 # constants
-N_INITIAL = 500  # 5000
+N_INITIAL = 5  # 5000
 
 M_TOT = 1e11  # Sun masses
 R_INITIAL = 50e3  # Parsec
@@ -139,7 +132,7 @@ function calculate_force!(system, energy=false)
         return total_energy
     end
 
-    # addprocs(8)
+
     tmp = convert(SharedArray{Float64,2},zeros(system.N, 3))
     @sync begin
         # pmap(i-> (
@@ -151,7 +144,7 @@ function calculate_force!(system, energy=false)
             tmp[i,:] = calculate_force_helper!(system, system.root, point)
         end
     end
-   system.forces = tmp
+    system.forces = tmp
     # system.forces = zeros(system.N, 3)
     # i = 1
     # for point in eachrow(system.positions)
@@ -257,7 +250,7 @@ function remove_exceeds_masses(system)
 end
 
 
-function scatter_(mass_system::MassSystem, cam)
+function scatter_(mass_system::MassSystem, cam=(40,50))
     p = mass_system.positions
     scatter(p[:,1],p[:,2],p[:,3], camera = cam)
     xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
@@ -265,8 +258,12 @@ function scatter_(mass_system::MassSystem, cam)
     ylims!(ylm[1], ylm[2])
     zlims!(zlm[1], zlm[2])
 end
-function scatter_(mass_system::MassSystem)
-    scatter_(mass_system, (40,50))
+function scatter_(p::Array{Float64,2}, cam=(40,50))
+    scatter(p[:,1],p[:,2],p[:,3], camera = cam)
+    xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
+    xlims!(xlm[1], xlm[2])  # Reproduce magnification
+    ylims!(ylm[1], ylm[2])
+    zlims!(zlm[1], zlm[2])
 end
 
 function calculate_energy(mass_system::MassSystem)
@@ -276,42 +273,24 @@ function calculate_energy(mass_system::MassSystem)
     [kinectic_energy, potential_energy]
 
 end
-
-function save_figures(num, save_positions, folder)
-    # ioff()
-    fig = figure(num)
-    ax = fig.add_subplot(111, projection="3d")
-    points = save_positions[1][1:Int(end/2),:]
-    scat = ax.scatter3D(points[:,1],points[:,2], points[:,3])
-    xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
-    ax.set_xlim3d(xlm[1], xlm[2])  # Reproduce magnification
-    ax.set_ylim3d(ylm[1], ylm[2])  # ...
-    ax.set_zlim3d(zlm[1], zlm[2])  #
-    i = 0
-    for points in save_positions
-        p = points[1:Int(end/2),:]
-        scat.remove()
-        scat = ax.scatter3D(p[:,1],p[:,2], p[:,3], color="C0")
-        PyPlot.savefig(string(folder,i,".png"), bbox_inches="tight", dpi=100)
-        i = i+1
+macro save(filename, var)
+    open(eval(filename), "w") do io
+        write(io, JSON.json(eval(var)))
     end
 end
 
-
-py"""
-def gif_(folder, name):
-    import imageio
-    import os
-    import re
-
-    filename = [fn for fn in os.listdir(folder) if fn.endswith(".png")]
-    filename.sort(key=lambda f: int(re.sub("\D", "", f)))
-    images = [imageio.imread(folder + fn) for fn in filename]
-
-    imageio.mimsave(folder + name + ".gif", images)
-"""
+function save_figures(num, save_positions, folder)
+    i=0
+    anim = @animate for p in save_positions
+        scatter_(p)
+        savefig(string(folder,i,".png"))
+        i = i + 1
+    end;
+    gif(anim, folder*"gif.gif",fps=5);
+end
 
 function create_folder()
+    cd("/home/elyco/github/End_Project/")
     n = Dates.now()
     now = Dates.now()
     day = Dates.format(n, "mm_dd")
@@ -363,7 +342,7 @@ function start_cal(n, mass_system)
 end
 
 # define parameters of calculation
-Random.seed!(123)
+Random.seed!(12334)
 velocity = 80.
 tf = 80.
 n = floor(Int, T_FINAL/tf + 1)
@@ -375,7 +354,7 @@ mass_system = MassSystem(N_INITIAL,velocity)
 mass_system.root = build_tree!(mass_system)
 
 # start simulation
-# n=10
+n=20
 t = @elapsed all_positions,energy, lost_masses = start_cal(n, mass_system)
 
 # make a folder for saving the results
@@ -385,17 +364,14 @@ mv(folder, new_folder_rename)
 folder = new_folder_rename
 
 # save results to files
-@save folder*"all_pos.jld2" all_positions
-# all_positions = @load "all_pos.jld2" or something like that
+@save string(folder,"all_pos.txt") all_positions
 save_figures(1, all_positions, folder)
-py"gif_"(folder,"animated")
+# py"gif_"(folder,"animated")
 
 # plot the graphs
 time_series = (0:n-1) .* tf
 total_energy1 = sum(energy, dims=2)
 total_energy2 = sum(energy, dims=2) .+ lost_masses
-using Plots
-using LaTeXStrings
 Plots.plot(time_series, -1 .+ total_energy1 ./ total_energy1[1], label=L"Energy Conservation")
 Plots.plot!(time_series, -1 .+ total_energy2 ./ total_energy2[1], label=L"Energy\ Conservation\ with\ lost")
 Plots.plot!(time_series, -2 .* energy[:,1] ./ energy[:,2],label=L"\dfrac{E_k}{E_p}")
@@ -403,3 +379,18 @@ Plots.plot!(time_series, -2 .* (energy[:,1] .+ lost_masses) ./ energy[:,2],label
 xlabel!("t"*" [astrnumical units]")
 
 Plots.savefig(folder*"plot.png")
+
+
+# cd("/media/elyco/4b0478ef-8be0-4e13-b307-6f558cad31c4/elyco/Documents/data")
+# # pwd()
+# using JSON
+# all_positions = JSON.parse(open(f->read(f, String), "myfile.txt"));
+# b = [hcat(a...) for a in all_positions]
+#
+# energy = JSON.parse(open(f->read(f, String), "myfile_energy.txt"));
+# energy = hcat(energy...)
+#
+# lost_masses = JSON.parse(open(f->read(f, String), "myfile_lost_masses.txt"));
+# folder = "~/github/End_Project/results/07_22/13_30_52_eps_100_N_mass_5000_repeat_ode_256_v_80.0_time_83.27_m_jullia_distributed/"
+# MAX_BOX_SIZE = 666e3  # Parsec
+# save_figures(1, b, folder)

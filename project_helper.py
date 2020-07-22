@@ -46,7 +46,7 @@ def gif(folder, name):
     import os
     import re
 
-    filename = [fn for fn in os.listdir(folder) if fn.endswith('.png')]
+    filename = [fn for fn in os.listdir(folder) if fn.endswith('.png') and not fn.startswith("plot")]
     filename.sort(key=lambda f: int(re.sub('\D', '', f)))
     images = [imageio.imread(folder + fn) for fn in filename]
 
