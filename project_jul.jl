@@ -6,6 +6,7 @@ project_jul:
 =#
 include("RK.jl")
 using LinearAlgebra
+using Distributions
 using Random
 using Debugger
 using JLD2
@@ -17,9 +18,23 @@ using PyPlot
 rcParams = PyPlot.PyDict(PyPlot.matplotlib."rcParams")
 rcParams["font.size"] = "14"
 
+include("StructModule.jl")
+using .StructModule
+
+# using Distributed
+@everywhere begin
+    # using Distributed
+    # include("StructModule.jl")
+    # using .StructModule
+    using LinearAlgebra: norm
+    using SharedArrays
+    THETA = 1
+    GRAVITATIONAL_CONSTANT = 4.30091e-3
+    SOFT_PARAM = 1e3  # Parsec
+end
 
 # constants
-N_INITIAL = 50  # 5000
+N_INITIAL = 500  # 5000
 
 M_TOT = 1e11  # Sun masses
 R_INITIAL = 50e3  # Parsec
@@ -30,82 +45,6 @@ T_FINAL = 20453  # in units time of the exercise
 STEP_T = T_FINAL/20e4
 THETA = 1
 GRAVITATIONAL_CONSTANT = 4.30091e-3
-
-module StructModule
-
-
-using LinearAlgebra
-using Distributions
-using Plots
-
-M_TOT = 1e11  # Sun masses
-R_INITIAL = 50e3  # Parsec
-SOFT_PARAM = 1e3  # Parsec
-MAX_BOX_SIZE = 666e3  # Parsec
-T_FINAL = 20e9  # years, = 20453 in units time of the exercise
-T_FINAL = 20453  # in units time of the exercise
-STEP_T = T_FINAL/20e4
-THETA = 1
-GRAVITATIONAL_CONSTANT = 4.30091e-3
-
-
-mutable struct Node
-    borders::Array{Float64,2}
-    diagonal::Float64
-    mass_count::Int64
-    leafs::Array{Node,1}
-    parent::Node
-    center_of_mass::Array{Float64,1}
-    masses_indices::Array{Int64,1}
-    function Node(borders_::Array{Float64,2}, mass_count::Int64)
-        x = new();
-        x.borders = borders_;
-        x.diagonal = norm(borders_[1,:]-borders_[2,:], 2);
-        x.mass_count = mass_count;
-        x.center_of_mass = zeros(3)
-        x.masses_indices = []
-        x
-    end
-end
-function Node(borders::Array{Float64,2})
-   return Node(borders,0)
-end
-
-mutable struct MassSystem
-    N::Int32
-    each_mass::Float64
-    positions::Array{Float64,2}
-    velocities::Array{Float64,2}
-    forces::Array{Float64,2}
-    root::Node
-end
-function MassSystem(N::Int64,velocity::Float64)
-    # initialize MassSystem
-    each_mass = M_TOT/N
-
-    # calculate positions
-    u = rand(N)
-    cos_theta = rand(N)
-    phi = rand(N)
-
-    phi = 2*pi*phi
-    cos_theta = 2 .* cos_theta .- 1
-    sin_theta = sqrt.(1 .- cos_theta .^ 2)
-    r = R_INITIAL .* u .^ (1/3)
-    positions = r .* [sin_theta .* cos.(phi) sin_theta .* sin.(phi) cos_theta]
-
-    d = Normal(0, velocity/sqrt(3) )
-    # calculate velocities
-    velocities = rand(d, N, 3)
-    # initialize forces
-    forces = zeros(N,3)
-
-    # build tree
-    root = Node(zeros(2,3))
-    system = MassSystem(N,each_mass,positions,velocities,forces,root)
-    system.root = build_tree!(system)
-    system
-end
 
 
 function build_tree!(system::MassSystem)
@@ -165,7 +104,7 @@ function fill_attributes!(system, node)
 end
 
 
-function point_in_box(point, borders)
+@everywhere function point_in_box(point, borders)
     return borders[1,1] <= point[1] < borders[2,1] &&
            borders[1,2] <= point[2] < borders[2,2] &&
            borders[1,3] <= point[3] < borders[2,3]
@@ -185,25 +124,51 @@ function get_current_box_size(system::MassSystem)
 end
 
 
-function calculate_force!(system)
+function calculate_force!(system, energy=false)
     """
     Initiate the calculation of the force for each point mass we are saving the force that act on it.
     :return:
     """
-    system.forces = zeros(system.N, 3)
-    i = 1
-    for point in eachrow(system.positions)
-        system.forces[i,:] = calculate_force_helper!(system, system.root, point)
-        i = i + 1
+    total_energy = 0.
+    if energy
+        i = 1
+        for point in eachrow(system.positions)
+            total_energy = total_energy + calculate_force_helper!(system, system.root, point,energy)
+            i = i + 1
+        end
+        return total_energy
     end
+
+    # addprocs(8)
+    tmp = convert(SharedArray{Float64,2},zeros(system.N, 3))
+    @sync begin
+        # pmap(i-> (
+        #     point = system.positions[i,:];
+        #     tmp[i,:] = calculate_force_helper!(system, system.root, point)
+        #     ), 1:system.N)
+        @distributed for i in 1:system.N
+            point = system.positions[i,:]
+            tmp[i,:] = calculate_force_helper!(system, system.root, point)
+        end
+    end
+   system.forces = tmp
+    # system.forces = zeros(system.N, 3)
+    # i = 1
+    # for point in eachrow(system.positions)
+    #     system.forces[i,:] = calculate_force_helper!(system, system.root, point, energy)
+    #     i = i + 1
+    # end
 end
 
 
-function calculate_force_helper!(system, node, point)
+@everywhere function calculate_force_helper!(system, node, point, energy=false)
     """
     Recursive function return the for acting on "point" from all the masses in "node"
     """
     force = [0., 0., 0.]
+    if energy
+        force = 0.
+    end
     if node.mass_count == 0
         # exit condition from the recursion
         return force
@@ -219,8 +184,11 @@ function calculate_force_helper!(system, node, point)
             # unless we are calculating for the same point
             return force  # [0., 0., 0.]
         end
-
         # compute and return the force
+        if energy
+            return .- GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
+        end
+
         force_amplitude = GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM) ^ 2
         force_direction = distance_vec / distance
         return force_amplitude * force_direction
@@ -228,10 +196,14 @@ function calculate_force_helper!(system, node, point)
         # mass_count >= 2
         if distance / node.diagonal < THETA || point_in_box(point, node.borders)
             # if too close we are need to get inside the recursion
+
             for leaf in node.leafs
-                force = force + calculate_force_helper!(system, leaf, point)
+                force = force + calculate_force_helper!(system, leaf, point, energy)
             end
         else
+            if energy
+                return .- GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
+            end
             # we don't need to go further just multiply the force by the number of masses inside this node
             force_amplitude = node.mass_count * GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM) ^ 2
             force_direction = distance_vec / distance
@@ -257,18 +229,6 @@ function get_current_values(system)
     vcat(r, v)
 end
 
-# function ode_to_solve(dy,y,system, t)
-#     dof = system.N * 3
-#     set_values_from_flat!(y,system)
-#     system.root = build_tree!(system)
-#     calculate_force!(system)
-#
-#     drdt = y[dof+1:end]
-#     dvdt = system.forces[:] ./ system.each_mass
-#     # println(dvdt)
-#     dy = vcat(drdt, dvdt)
-# end
-
 function ode_to_solve_my_RK(t,y,system)
     dof = system.N * 3
     set_values_from_flat!(y,system)
@@ -288,7 +248,11 @@ function remove_exceeds_masses(system)
     if length(ind_to_del) > 0
         system.N = system.N - length(ind_to_del)
         system.positions  =  system.positions[setdiff(1:end, ind_to_del),:]
+        vel_ind_to_del  = system.velocities[ind_to_del,:]
         system.velocities = system.velocities[setdiff(1:end, ind_to_del),:]
+        return sum(0.5 .* system.each_mass .* (vel_ind_to_del[:,1] .^ 2 + vel_ind_to_del[:,2] .^ 2 + vel_ind_to_del[:,3] .^ 2))
+    else
+        return 0.
     end
 end
 
@@ -305,8 +269,13 @@ function scatter_(mass_system::MassSystem)
     scatter_(mass_system, (40,50))
 end
 
-end  # module
+function calculate_energy(mass_system::MassSystem)
+    potential_energy = calculate_force!(mass_system, true)
+    v_squre = mass_system.velocities[:,1] .^ 2 + mass_system.velocities[:,2] .^ 2 + mass_system.velocities[:,3] .^ 2
+    kinectic_energy = sum(0.5 .* mass_system.each_mass .* v_squre)
+    [kinectic_energy, potential_energy]
 
+end
 
 function save_figures(num, save_positions, folder)
     # ioff()
@@ -360,31 +329,37 @@ end
 function start_cal(n, mass_system)
     count_dead = 0
     save_positions = []
+    energy = []
+    energy_of_lost_massess = []
     for i in 1:n
         println(i)
-        y_0 = StructModule.get_current_values(mass_system)
+        y_0 = get_current_values(mass_system)
         if length(y_0)/6 < N_INITIAL - count_dead
             count_dead = count_dead + 1
             println(count_dead, " particles are deads")
+            # println(length(y_0))
+            # println(length(mass_system.positions[:]))
+            # println(length(mass_system.velocities[:]))
+            # println(mass_system.N)
         end
 
-        # prob = ODEProblem(StructModule.ode_to_solve ,y_0 ,t_span , mass_system)
-        # global sol = solve(prob,reltol=1e-8,abstol=1e-3)
-        # StructModule.set_values_from_flat!(sol.u[end],mass_system)
-
-        ode_solver = make_solver(StructModule.ode_to_solve_my_RK, t_span, "RK4", abstol, mass_system)
+        ode_solver = make_solver(ode_to_solve_my_RK, t_span, "RK4", abstol, mass_system)
         sol = ode_solver(y_0)[2][:,end]
-        StructModule.set_values_from_flat!(sol, mass_system)
+        set_values_from_flat!(sol, mass_system)
 
-        StructModule.remove_exceeds_masses(mass_system)
+        push!(energy, calculate_energy(mass_system) )
+        push!(energy_of_lost_massess, remove_exceeds_masses(mass_system))
+
         if i % 2 == 0
             push!(save_positions,vcat(mass_system.positions,mass_system.velocities))
         end
         if mass_system.N == 0
-            return save_positions
+            println("Simulation is over, no more particles")
+            return save_positions, vcat(energy'...) , cumsum(energy_of_lost_massess)
         end
     end
-    save_positions
+
+    save_positions, vcat(energy'...) , cumsum(energy_of_lost_massess)
 end
 
 # define parameters of calculation
@@ -396,19 +371,35 @@ t_span = (0., tf)
 abstol = 100
 
 # define the system
-mass_system = StructModule.MassSystem(N_INITIAL,velocity)
+mass_system = MassSystem(N_INITIAL,velocity)
+mass_system.root = build_tree!(mass_system)
 
 # start simulation
-t = @elapsed all_positions = start_cal(n, mass_system)
+# n=10
+t = @elapsed all_positions,energy, lost_masses = start_cal(n, mass_system)
 
-# save results to files
+# make a folder for saving the results
 folder = create_folder()
 new_folder_rename = folder[1:end-1] * format("_eps_{}_N_mass_{}_repeat_ode_{}_v_{}_time_{:.2f}_m_jullia/",abstol,N_INITIAL,n,velocity,t/60)
 mv(folder, new_folder_rename)
 folder = new_folder_rename
 
-
+# save results to files
 @save folder*"all_pos.jld2" all_positions
-# all_positions = @load "all_pos.jld2"
+# all_positions = @load "all_pos.jld2" or something like that
 save_figures(1, all_positions, folder)
 py"gif_"(folder,"animated")
+
+# plot the graphs
+time_series = (0:n-1) .* tf
+total_energy1 = sum(energy, dims=2)
+total_energy2 = sum(energy, dims=2) .+ lost_masses
+using Plots
+using LaTeXStrings
+Plots.plot(time_series, -1 .+ total_energy1 ./ total_energy1[1], label=L"Energy Conservation")
+Plots.plot!(time_series, -1 .+ total_energy2 ./ total_energy2[1], label=L"Energy\ Conservation\ with\ lost")
+Plots.plot!(time_series, -2 .* energy[:,1] ./ energy[:,2],label=L"\dfrac{E_k}{E_p}")
+Plots.plot!(time_series, -2 .* (energy[:,1] .+ lost_masses) ./ energy[:,2],label=L"\dfrac{E_k}{E_p}+lost\ masses")
+xlabel!("t"*" [astrnumical units]")
+
+Plots.savefig(folder*"plot.png")
