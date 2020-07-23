@@ -411,21 +411,7 @@ global mass_system = MassSystem(N_INITIAL,velocity)
 mass_system.root = build_tree!(mass_system)
 
 # start simulation
-# t = @elapsed all_positions, energy, lost_masses = start_cal(n, mass_system, t_span, abstol)
-t_span = (0., T_FINAL/100)
-y_0 = get_current_values(mass_system)
-ode_solver = make_solver(ode_to_solve_my_RK, t_span, "RK4", abstol, mass_system)
-t = @elapsed x,ys = ode_solver(y_0)
-
-# agrid = x
-# vals = ys # the all values of positions in differnets times
-using Interpolations
-itp = interpolate((x,), ys, Gridded(Linear()))
-
-need_time = 0:tf:T_FINAL/100  # time slices
-
-all_positions = itp.(need_time)
-
+t = @elapsed all_positions, energy, lost_masses = start_cal(n, mass_system, t_span, abstol)
 
 # make a folder for saving the results
 global folder = create_folder()
