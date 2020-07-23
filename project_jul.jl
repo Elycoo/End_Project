@@ -14,6 +14,9 @@ using Dates
 using JSON
 using Plots
 using LaTeXStrings
+using KernelDensity
+using LsqFit
+
 
 include("StructModule.jl")
 using .StructModule
@@ -27,7 +30,7 @@ using .StructModule
 end
 
 # constants
-N_INITIAL = 5  # 5000
+N_INITIAL = 5000 # 5000
 
 M_TOT = 1e11  # Sun masses
 R_INITIAL = 50e3  # Parsec
@@ -252,11 +255,7 @@ end
 
 function scatter_(mass_system::MassSystem, cam=(40,50))
     p = mass_system.positions
-    scatter(p[:,1],p[:,2],p[:,3], camera = cam)
-    xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
-    xlims!(xlm[1], xlm[2])  # Reproduce magnification
-    ylims!(ylm[1], ylm[2])
-    zlims!(zlm[1], zlm[2])
+    scatter_(p, cam)
 end
 function scatter_(p::Array{Float64,2}, cam=(40,50))
     scatter(p[:,1],p[:,2],p[:,3], camera = cam)
@@ -273,11 +272,38 @@ function calculate_energy(mass_system::MassSystem)
     [kinectic_energy, potential_energy]
 
 end
-macro save(filename, var)
-    open(eval(filename), "w") do io
-        write(io, JSON.json(eval(var)))
+function save(folder, system)
+    fold = string(folder,"MassSystem/")
+    mkdir(fold)
+    open(fold*"positions.txt", "w") do io
+        write(io, JSON.json(system.positions))
+    end
+    open(fold*"velocities.txt", "w") do io
+        write(io, JSON.json(system.velocities))
+    end
+    open(fold*"eachmass.txt", "w") do io
+        write(io, JSON.json(system.each_mass))
     end
 end
+function load(folder)
+    system = MassSystem(1,1.)
+
+    fold = string(folder,"MassSystem/")
+	p = JSON.parse(open(f->read(f, String), fold*"positions.txt"));
+    v = JSON.parse(open(f->read(f, String), fold*"velocities.txt"));
+    m = JSON.parse(open(f->read(f, String), fold*"eachmass.txt"));
+
+    system.N = size(p[1])[1]
+    system.each_mass = m
+
+    system.positions = hcat(p...)
+    system.velocities = hcat(v...)
+    system.forces = zeros(system.N, 3)
+
+    system.root = build_tree!(system)
+    system
+end
+
 
 function save_figures(num, save_positions, folder)
     i=0
@@ -305,7 +331,7 @@ function create_folder()
 end
 
 
-function start_cal(n, mass_system)
+function start_cal(n, mass_system, t_span, abstol)
     count_dead = 0
     save_positions = []
     energy = []
@@ -316,10 +342,6 @@ function start_cal(n, mass_system)
         if length(y_0)/6 < N_INITIAL - count_dead
             count_dead = count_dead + 1
             println(count_dead, " particles are deads")
-            # println(length(y_0))
-            # println(length(mass_system.positions[:]))
-            # println(length(mass_system.velocities[:]))
-            # println(mass_system.N)
         end
 
         ode_solver = make_solver(ode_to_solve_my_RK, t_span, "RK4", abstol, mass_system)
@@ -341,30 +363,78 @@ function start_cal(n, mass_system)
     save_positions, vcat(energy'...) , cumsum(energy_of_lost_massess)
 end
 
+function find_density(system)
+    p = system.positions
+    COM = system.root.center_of_mass
+    radii =  sqrt.((p[:,1] .- COM[1]).^2 .+(p[:,2] .- COM[2]).^2 .+(p[:,3] .- COM[3]).^2)
+    u = kde(radii);
+    ind = sum(u.x .< 0) + 1
+    indf = [i for i in 1:length(u.x) if u.x[i]>7e5][1]
+    println(ind,' ',indf)
+    ux = u.x[ind:indf]
+    density = u.density[ind:indf]
+    # ux = u.x[ind:end]
+    # density = u.density[ind:end]
+
+    # curve_fit
+    @. model(x, p) = p[1] ./ ( 1 .+ (x ./ p[2] ).^p[3]  ).^(p[4]/p[3])
+    p0 = [1e-3,10^4.7,2.,2.5]
+    lb = [0.,0.,0.,0.]  # lower bound
+    fit = curve_fit(model, ux, density./ux, p0 ,lower=lb)
+    println(fit.param)
+    println(sum(fit.resid.^2))
+
+    ind = [i for i in 1:length(density) if  density[i]>0]
+    ux = ux[ind]
+    density = density[ind]
+    plo = plot(ux, density./ux,xaxis=:log,yaxis=:log, marker="o", label="simulation")
+    # plo = plot(ux, density./ux, marker="o", label="simulation")
+    plot!(ux, model(ux,fit.param), label="fit")
+    plo
+    # density
+    # fit
+end
 # define parameters of calculation
-Random.seed!(12334)
+Random.seed!(1134)
 velocity = 80.
+# mass_system = MassSystem(N_INITIAL,velocity)
+
+for velocity in [80.] #[65., 80., 95.]
+
 tf = 80.
-n = floor(Int, T_FINAL/tf + 1)
+n = ceil(Int, T_FINAL/tf)
 t_span = (0., tf)
 abstol = 100
 
 # define the system
-mass_system = MassSystem(N_INITIAL,velocity)
+global mass_system = MassSystem(N_INITIAL,velocity)
 mass_system.root = build_tree!(mass_system)
 
 # start simulation
-n=20
-t = @elapsed all_positions,energy, lost_masses = start_cal(n, mass_system)
+# t = @elapsed all_positions, energy, lost_masses = start_cal(n, mass_system, t_span, abstol)
+t_span = (0., T_FINAL/100)
+y_0 = get_current_values(mass_system)
+ode_solver = make_solver(ode_to_solve_my_RK, t_span, "RK4", abstol, mass_system)
+t = @elapsed x,ys = ode_solver(y_0)
+
+# agrid = x
+# vals = ys # the all values of positions in differnets times
+using Interpolations
+itp = interpolate((x,), ys, Gridded(Linear()))
+
+need_time = 0:tf:T_FINAL/100  # time slices
+
+all_positions = itp.(need_time)
+
 
 # make a folder for saving the results
-folder = create_folder()
+global folder = create_folder()
 new_folder_rename = folder[1:end-1] * format("_eps_{}_N_mass_{}_repeat_ode_{}_v_{}_time_{:.2f}_m_jullia/",abstol,N_INITIAL,n,velocity,t/60)
 mv(folder, new_folder_rename)
 folder = new_folder_rename
 
 # save results to files
-@save string(folder,"all_pos.txt") all_positions
+save(folder, mass_system)
 save_figures(1, all_positions, folder)
 # py"gif_"(folder,"animated")
 
@@ -380,6 +450,8 @@ xlabel!("t"*" [astrnumical units]")
 
 Plots.savefig(folder*"plot.png")
 
+# find_density(mass_system)
+# Plots.savefig(folder*"king.png")
 
 # cd("/media/elyco/4b0478ef-8be0-4e13-b307-6f558cad31c4/elyco/Documents/data")
 # # pwd()
@@ -394,3 +466,5 @@ Plots.savefig(folder*"plot.png")
 # folder = "~/github/End_Project/results/07_22/13_30_52_eps_100_N_mass_5000_repeat_ode_256_v_80.0_time_83.27_m_jullia_distributed/"
 # MAX_BOX_SIZE = 666e3  # Parsec
 # save_figures(1, b, folder)
+mass_system
+end
