@@ -1,47 +1,50 @@
+#%%
+# # # # # # # # import and constants # # # # # # # # # # # # # # # #
 #=
 project_jul:
 - Julia version: 1.0.4
 - Author: elyco
 - Date: 2020-07-19
 =#
-include("RK.jl")
 using LinearAlgebra
 using Distributions
 using Random
-using Debugger
-using Formatting: format
-using Dates
-using JSON
-using Plots
-using LaTeXStrings
 using KernelDensity
 using LsqFit
 
+# using Debugger
+using Plots
+using LaTeXStrings
+using Dates
+using JSON
+using Formatting: format
 
 include("StructModule.jl")
 using .StructModule
+include("RK.jl")
+include("helper.jl")
 
 @everywhere begin
     using LinearAlgebra: norm
     using SharedArrays
-    THETA = 1
-    GRAVITATIONAL_CONSTANT = 4.30091e-3
-    SOFT_PARAM = 1e3  # Parsec
+    const THETA = 1
+    const GRAVITATIONAL_CONSTANT = 4.30091e-3
+    const SOFT_PARAM = 1e3  # Parsec
 end
 
 # constants
-N_INITIAL = 5000 # 5000
+const N_INITIAL = 5000 # 5000
 
-M_TOT = 1e11  # Sun masses
-R_INITIAL = 50e3  # Parsec
-SOFT_PARAM = 1e3  # Parsec
-MAX_BOX_SIZE = 666e3  # Parsec
-T_FINAL = 20e9  # years, = 20453 in units time of the exercise
-T_FINAL = 20453  # in units time of the exercise
-STEP_T = T_FINAL/20e4
-THETA = 1
-GRAVITATIONAL_CONSTANT = 4.30091e-3
+const M_TOT                   = 1e11  # Sun masses
+const R_INITIAL               = 50e3  # Parsec
+const SOFT_PARAM              = 1e3  # Parsec
+const MAX_BOX_SIZE            = 666e3  # Parsec
+# const T_FINAL                 = 20e9  # years, = 20453 in units time of the exercise
+const T_FINAL                 = 20453  # in units time of the exercise
+const THETA                   = 1
+const GRAVITATIONAL_CONSTANT  = 4.30091e-3
 
+#%% Tres construct
 
 function build_tree!(system::MassSystem)
     borders = get_current_box_size(system)  # x_lim, y_lim, z_lim
@@ -119,23 +122,13 @@ function get_current_box_size(system::MassSystem)
     return hcat(x_lim, y_lim, z_lim)
 end
 
-
-function calculate_force!(system, energy=false)
-    """
-    Initiate the calculation of the force for each point mass we are saving the force that act on it.
+#%%
+# force/energy calculation
+"""
+Initiate the calculation of the force for each point mass we are saving the force that act on it.
     :return:
-    """
-    total_energy = 0.
-    if energy
-        i = 1
-        for point in eachrow(system.positions)
-            total_energy = total_energy + calculate_force_helper!(system, system.root, point,energy)
-            i = i + 1
-        end
-        return total_energy
-    end
-
-
+"""
+function calculate_force!(system)
     tmp = convert(SharedArray{Float64,2},zeros(system.N, 3))
     @sync begin
         # pmap(i-> (
@@ -151,40 +144,35 @@ function calculate_force!(system, energy=false)
     # system.forces = zeros(system.N, 3)
     # i = 1
     # for point in eachrow(system.positions)
-    #     system.forces[i,:] = calculate_force_helper!(system, system.root, point, energy)
+    #     system.forces[i,:] = calculate_force_helper!(system, system.root, point)
     #     i = i + 1
     # end
 end
 
 
-@everywhere function calculate_force_helper!(system, node, point, energy=false)
+@everywhere function calculate_force_helper!(system, node, point)
     """
     Recursive function return the for acting on "point" from all the masses in "node"
     """
     force = [0., 0., 0.]
-    if energy
-        force = 0.
-    end
-    if node.mass_count == 0
+    mass_count = node.mass_count
+
+    if mass_count == 0
         # exit condition from the recursion
         return force
     end
 
     # define the vector between two point
-    distance_vec = .-(point .- node.center_of_mass)  # attractive force
+    distance_vec = node.center_of_mass - point  # attractive force
     distance = norm(distance_vec)
 
-    if node.mass_count == 1
+    if mass_count == 1
         # if just 1 mass so the force is simply the force between them
         if distance == 0
             # unless we are calculating for the same point
             return force  # [0., 0., 0.]
         end
         # compute and return the force
-        if energy
-            return .- GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
-        end
-
         force_amplitude = GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM) ^ 2
         force_direction = distance_vec / distance
         return force_amplitude * force_direction
@@ -194,38 +182,92 @@ end
             # if too close we are need to get inside the recursion
 
             for leaf in node.leafs
-                force = force + calculate_force_helper!(system, leaf, point, energy)
+                force += calculate_force_helper!(system, leaf, point)
             end
+            return force
         else
-            if energy
-                return .- GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
-            end
             # we don't need to go further just multiply the force by the number of masses inside this node
             force_amplitude = node.mass_count * GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM) ^ 2
             force_direction = distance_vec / distance
             return force_amplitude * force_direction
         end
     end
-
-    # I don't think this line is ever executed
-    return force
 end
 
 
-function set_values_from_flat!(y,system)
-    dof = system.N * 3
-    system.positions = reshape(y[1:dof], (system.N, 3))
-    system.velocities = reshape(y[dof+1:end], (system.N, 3))
+function calculate_potential_energy(system)
+    total_energy = 0.
+    i = 1
+    for point in eachrow(system.positions)
+        total_energy += potential_energy_helper(system, system.root, point)
+        i = i + 1
+    end
+    return total_energy
 end
 
 
-function get_current_values(system)
-    r = system.positions[:]
-    v = system.velocities[:]
-    vcat(r, v)
+function potential_energy_helper(system, node, point)
+    """
+    Recursive function return the for acting on "point" from all the masses in "node"
+    """
+    energy = 0.
+
+    if node.mass_count == 0
+        # exit condition from the recursion
+        return energy
+    end
+
+    # define the vector between two point
+    distance_vec = .-(point .- node.center_of_mass)  # attractive energy
+    distance = norm(distance_vec)
+
+    if node.mass_count == 1
+        # if just 1 mass so the energy is simply the energy between them
+        if distance == 0
+            # unless we are calculating for the same point
+            return energy  # [0., 0., 0.]
+        end
+        # compute and return the energy
+        return -GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
+    else
+        # mass_count >= 2
+        if distance / node.diagonal < THETA || point_in_box(point, node.borders)
+            # if too close we are need to get inside the recursion
+
+            for leaf in node.leafs
+                energy += potential_energy_helper(system, leaf, point)
+            end
+            return energy
+        else
+            # we don't need to go further just multiply the energy by the number of masses inside this node
+            return - GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
+        end
+    end
+
 end
 
-function ode_to_solve_my_RK(t,y,system)
+function remove_exceeds_masses(system)
+    ind_to_del = maximum((system.positions .< -MAX_BOX_SIZE) .| (system.positions .> MAX_BOX_SIZE), dims=2)[:]
+    ind_to_del = (1:system.N)[ind_to_del]
+    if length(ind_to_del) > 0
+        system.N = system.N - length(ind_to_del)
+        system.positions  = system.positions[setdiff(1:end, ind_to_del),:]
+        system.velocities = system.velocities[setdiff(1:end, ind_to_del),:]
+        return nothing
+    else
+        return nothing
+    end
+end
+
+function calculate_energy(mass_system::MassSystem)
+    potential_energy = calculate_potential_energy(mass_system)/2    # no double counting
+    v_squre = mass_system.velocities[:,1] .^ 2 + mass_system.velocities[:,2] .^ 2 + mass_system.velocities[:,3] .^ 2
+    kinectic_energy = 0.5 * mass_system.each_mass * sum(v_squre)
+    [kinectic_energy, potential_energy]
+end
+
+#%%
+function ode_to_solve_my_RK(t::Float64,y::Array{Float64,1},system::MassSystem)
     dof = system.N * 3
     set_values_from_flat!(y,system)
     system.root = build_tree!(system)
@@ -238,104 +280,13 @@ function ode_to_solve_my_RK(t,y,system)
 end
 
 
-function remove_exceeds_masses(system)
-    ind_to_del = maximum((system.positions .< -MAX_BOX_SIZE) .| (system.positions .> MAX_BOX_SIZE), dims=2)[:]
-    ind_to_del = (1:system.N)[ind_to_del]
-    if length(ind_to_del) > 0
-        system.N = system.N - length(ind_to_del)
-        system.positions  =  system.positions[setdiff(1:end, ind_to_del),:]
-        vel_ind_to_del  = system.velocities[ind_to_del,:]
-        system.velocities = system.velocities[setdiff(1:end, ind_to_del),:]
-        return sum(0.5 .* system.each_mass .* (vel_ind_to_del[:,1] .^ 2 + vel_ind_to_del[:,2] .^ 2 + vel_ind_to_del[:,3] .^ 2))
-    else
-        return 0.
-    end
-end
-
-
-function scatter_(mass_system::MassSystem, cam=(40,50))
-    p = mass_system.positions
-    scatter_(p, cam)
-end
-function scatter_(p::Array{Float64,2}, cam=(40,50))
-    scatter(p[:,1],p[:,2],p[:,3], camera = cam)
-    xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
-    xlims!(xlm[1], xlm[2])  # Reproduce magnification
-    ylims!(ylm[1], ylm[2])
-    zlims!(zlm[1], zlm[2])
-end
-
-function calculate_energy(mass_system::MassSystem)
-    potential_energy = calculate_force!(mass_system, true)
-    v_squre = mass_system.velocities[:,1] .^ 2 + mass_system.velocities[:,2] .^ 2 + mass_system.velocities[:,3] .^ 2
-    kinectic_energy = sum(0.5 .* mass_system.each_mass .* v_squre)
-    [kinectic_energy, potential_energy]
-
-end
-function save(folder, system)
-    fold = string(folder,"MassSystem/")
-    mkdir(fold)
-    open(fold*"positions.txt", "w") do io
-        write(io, JSON.json(system.positions))
-    end
-    open(fold*"velocities.txt", "w") do io
-        write(io, JSON.json(system.velocities))
-    end
-    open(fold*"eachmass.txt", "w") do io
-        write(io, JSON.json(system.each_mass))
-    end
-end
-function load(folder)
-    system = MassSystem(1,1.)
-
-    fold = string(folder,"MassSystem/")
-	p = JSON.parse(open(f->read(f, String), fold*"positions.txt"));
-    v = JSON.parse(open(f->read(f, String), fold*"velocities.txt"));
-    m = JSON.parse(open(f->read(f, String), fold*"eachmass.txt"));
-
-    system.N = size(p[1])[1]
-    system.each_mass = m
-
-    system.positions = hcat(p...)
-    system.velocities = hcat(v...)
-    system.forces = zeros(system.N, 3)
-
-    system.root = build_tree!(system)
-    system
-end
-
-
-function save_figures(num, save_positions, folder)
-    i=0
-    anim = @animate for p in save_positions
-        scatter_(p)
-        savefig(string(folder,i,".png"))
-        i = i + 1
-    end;
-    gif(anim, folder*"gif.gif",fps=5);
-end
-
-function create_folder()
-    cd("/home/elyco/github/End_Project/")
-    n = Dates.now()
-    now = Dates.now()
-    day = Dates.format(n, "mm_dd")
-    hour = Dates.format(n, "HH_MM_SS")
-    if ~ispath(string("./results/",day))
-        mkdir(string("./results/",day))
-    end
-    if ~ispath(string("./results/",day,"/",hour,"/"))
-        mkdir(string("./results/",day,"/",hour,"/"))
-    end
-    string("./results/",day,"/",hour,"/")
-end
-
 
 function start_cal(n, mass_system, t_span, abstol)
     count_dead = 0
     save_positions = []
     energy = []
     energy_of_lost_massess = []
+    kinetic_energy_of_lost_massess = []
     for i in 1:n
         println(i)
         y_0 = get_current_values(mass_system)
@@ -348,11 +299,17 @@ function start_cal(n, mass_system, t_span, abstol)
         sol = ode_solver(y_0)[2][:,end]
         set_values_from_flat!(sol, mass_system)
 
-        push!(energy, calculate_energy(mass_system) )
-        push!(energy_of_lost_massess, remove_exceeds_masses(mass_system))
+        energy_before = calculate_energy(mass_system)
+        remove_exceeds_masses(mass_system)
+        energy_after = calculate_energy(mass_system)
+        energy_lost = energy_after .- energy_before
+
+        push!(energy, energy_before)
+        push!(energy_of_lost_massess, energy_lost )
+        # push!(kinetic_energy_of_lost_massess, energy_lost[1])
 
         if i % 2 == 0
-            push!(save_positions,vcat(mass_system.positions,mass_system.velocities))
+            push!(save_positions,mass_system.positions)
         end
         if mass_system.N == 0
             println("Simulation is over, no more particles")
@@ -360,46 +317,47 @@ function start_cal(n, mass_system, t_span, abstol)
         end
     end
 
-    save_positions, vcat(energy'...) , cumsum(energy_of_lost_massess)
+    save_positions, vcat(energy'...) , vcat(cumsum(energy_of_lost_massess)'...)
 end
-
-function find_density(system)
+#%%
+function find_density(system::MassSystem)
     p = system.positions
     COM = system.root.center_of_mass
     radii =  sqrt.((p[:,1] .- COM[1]).^2 .+(p[:,2] .- COM[2]).^2 .+(p[:,3] .- COM[3]).^2)
-    u = kde(radii);
-    ind = sum(u.x .< 0) + 1
-    indf = [i for i in 1:length(u.x) if u.x[i]>7e5][1]
-    println(ind,' ',indf)
-    ux = u.x[ind:indf]
-    density = u.density[ind:indf]
-    # ux = u.x[ind:end]
-    # density = u.density[ind:end]
+    find_density(radii)
+end
+function find_density(radii::Array{Float64,1})
+    xdata = range(minimum(radii), maximum(radii),length=10^3)
+    xdata = range(minimum(radii), 10^5.2,length=10^3)
+    p = kde(radii)
+    ydata = KernelDensity.pdf(p,xdata)
 
     # curve_fit
-    @. model(x, p) = p[1] ./ ( 1 .+ (x ./ p[2] ).^p[3]  ).^(p[4]/p[3])
-    p0 = [1e-3,10^4.7,2.,2.5]
-    lb = [0.,0.,0.,0.]  # lower bound
-    fit = curve_fit(model, ux, density./ux, p0 ,lower=lb)
+    @. model(x, p) =  p[1]*x^2/(1 + (x/p[2])^p[3] )^(p[4]/p[3])
+    # p0 = [1e-5,10^4.7,5.13,2.2]
+    p0 = [1e-7, 39600, 1.14, 8.98]
+    # p0=[6.52686738e-07, 3.10550454e+04, 2.50608032e+00, 4.79147796e+00]
+    lb = [0 ,0.,0.,0.]  # lower bound
+    fit = curve_fit(model, xdata, ydata, p0 ,lower=lb)
     println(fit.param)
     println(sum(fit.resid.^2))
 
-    ind = [i for i in 1:length(density) if  density[i]>0]
-    ux = ux[ind]
-    density = density[ind]
-    plo = plot(ux, density./ux,xaxis=:log,yaxis=:log, marker="o", label="simulation")
-    # plo = plot(ux, density./ux, marker="o", label="simulation")
-    plot!(ux, model(ux,fit.param), label="fit")
-    plo
+    # plo = plot(xdata, ydata,xaxis=:log,yaxis=:log, marker="o", label="simulation")
+    plo = plot(xdata,ydata, marker="o", label="simulation")
+    plot!(xdata, model(xdata,fit.param), label="fit")
+
     # density
     # fit
 end
+R2(x::Float64,y::Float64,z::Float64) = x^2+y^2+z^2
+R2(r::Array{Float64,1}) = r[1]^2+r[2]^2+r[3]^2
+#%%
 # define parameters of calculation
-Random.seed!(1134)
-velocity = 80.
+Random.seed!(1364)
+velocity = 60.
 # mass_system = MassSystem(N_INITIAL,velocity)
 
-for velocity in [80.] #[65., 80., 95.]
+# for velocity in [80.] #[65., 80., 95.]
 
 tf = 80.
 n = ceil(Int, T_FINAL/tf)
@@ -408,49 +366,70 @@ abstol = 100
 
 # define the system
 global mass_system = MassSystem(N_INITIAL,velocity)
+mass_system.velocities .-= mean(mass_system.velocities, dims=1)
 mass_system.root = build_tree!(mass_system)
 
 # start simulation
-t = @elapsed all_positions, energy, lost_masses = start_cal(n, mass_system, t_span, abstol)
+n=2
+t = @elapsed all_positions, energy, lost_masses_energy = start_cal(n, mass_system, t_span, abstol)
+n = size(energy)[1]
+# #%%
+# # make a folder for saving the results
+# gr()
+# global folder = create_folder()
+# new_folder_rename = folder[1:end-1] * format("_eps_{}_N_mass_{}_repeat_ode_{}_v_{}_time_{:.2f}_m_jullia/",abstol,N_INITIAL,n,velocity,t/60)
+# mv(folder, new_folder_rename)
+# folder = new_folder_rename
+#
+# # save results to files
+# save(folder, mass_system, [energy, lost_masses_energy], ["energy", "lost_masses_energy"])
+# save_figures(1, all_positions, folder)
+# # py"gif_"(folder,"animated")
 
-# make a folder for saving the results
-global folder = create_folder()
-new_folder_rename = folder[1:end-1] * format("_eps_{}_N_mass_{}_repeat_ode_{}_v_{}_time_{:.2f}_m_jullia/",abstol,N_INITIAL,n,velocity,t/60)
-mv(folder, new_folder_rename)
-folder = new_folder_rename
-
-# save results to files
-save(folder, mass_system)
-save_figures(1, all_positions, folder)
-# py"gif_"(folder,"animated")
-
+#%%
 # plot the graphs
+# plotly()
 time_series = (0:n-1) .* tf
 total_energy1 = sum(energy, dims=2)
-total_energy2 = sum(energy, dims=2) .+ lost_masses
-Plots.plot(time_series, -1 .+ total_energy1 ./ total_energy1[1], label=L"Energy Conservation")
-Plots.plot!(time_series, -1 .+ total_energy2 ./ total_energy2[1], label=L"Energy\ Conservation\ with\ lost")
-Plots.plot!(time_series, -2 .* energy[:,1] ./ energy[:,2],label=L"\dfrac{E_k}{E_p}")
-Plots.plot!(time_series, -2 .* (energy[:,1] .+ lost_masses) ./ energy[:,2],label=L"\dfrac{E_k}{E_p}+lost\ masses")
-xlabel!("t"*" [astrnumical units]")
+total_energy2 = sum(energy.-lost_masses_energy, dims=2)
+# Plots.plot(time_series, -1 .+ total_energy1 ./ total_energy1[1], label=L"Energy\ Conservation")
+# Plots.plot(time_series, total_energy1 , label=L"Energy\ Conservation")
+# Plots.plot!(time_series, -1 .+ total_energy2 ./ total_energy2[1], label=L"Energy\ Conservation\ with\ lost")
 
-Plots.savefig(folder*"plot.png")
+# Plots.plot(time_series, energy[:,1], label="Kinetic")
+# Plots.plot!(time_series, energy[:,2], label="potintional")
+# Plots.plot!(time_series, (energy.-lost_masses_energy)[:,1], label="Kinetic with lost")
+# Plots.plot!(time_series, (energy.-lost_masses_energy)[:,2], label="potintional with lost")
 
+# Plots.savefig(folder*"energy.png")
+# Plots.plot(time_series, -2 .* energy[:,1] ./ energy[:,2],label=L"\dfrac{E_k}{E_p}")
+# Plots.plot!(time_series, -2 .* (energy[:,1] .- lost_masses_energy[:,1]) ./ (energy[:,2] .- lost_masses_energy[:,2]),label=L"\dfrac{E_k}{E_p}+lost\ masses")
+# Plots.savefig(folder*"ratio.png")
+# xlabel!("t"*" [astrnumical units]")
+
+# plot((0:length(all_positions)-1) .* tf,R2.([p[1,:]-p[2,:] for p in all_positions]))
 # find_density(mass_system)
 # Plots.savefig(folder*"king.png")
+#%%
+# mass_system
+# end
 
-# cd("/media/elyco/4b0478ef-8be0-4e13-b307-6f558cad31c4/elyco/Documents/data")
-# # pwd()
-# using JSON
-# all_positions = JSON.parse(open(f->read(f, String), "myfile.txt"));
-# b = [hcat(a...) for a in all_positions]
+
+# println("finished to calculate system start on average")
+# t_span = (0., tf*3)
+# n = 50
+
+# all_positions, energy, lost_masses = start_cal(n, mass_system, t_span, abstol)
 #
-# energy = JSON.parse(open(f->read(f, String), "myfile_energy.txt"));
-# energy = hcat(energy...)
-#
-# lost_masses = JSON.parse(open(f->read(f, String), "myfile_lost_masses.txt"));
-# folder = "~/github/End_Project/results/07_22/13_30_52_eps_100_N_mass_5000_repeat_ode_256_v_80.0_time_83.27_m_jullia_distributed/"
-# MAX_BOX_SIZE = 666e3  # Parsec
-# save_figures(1, b, folder)
-mass_system
-end
+# radii = []
+# for pos in all_positions
+#     COM = mean(pos, dims=1)[1,:]
+#     push!(radii, sqrt.((pos[:,1] .- COM[1]).^2 .+(pos[:,2] .- COM[2]).^2 .+(pos[:,3] .- COM[3]).^2) )
+# end
+# radii2 = vcat(radii...)
+# fold = string(folder,"MassSystem/")
+# open(fold*"radii2.txt", "w") do io
+#     write(io, JSON.json(radii2))
+# end
+# find_density(radii2)
+# find_density(mass_system)

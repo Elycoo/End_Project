@@ -5,8 +5,8 @@ using LinearAlgebra
 
 export Node, MassSystem
 
-M_TOT = 1e11  # Sun masses
-R_INITIAL = 50e3  # Parsec
+const M_TOT = 1e11  # Sun masses
+const R_INITIAL = 50e3  # Parsec
 
 
 mutable struct Node
