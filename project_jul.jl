@@ -130,6 +130,7 @@ Initiate the calculation of the force for each point mass we are saving the forc
 """
 function calculate_force!(system)
     tmp = convert(SharedArray{Float64,2},zeros(system.N, 3))
+    # =
     @sync begin
         # pmap(i-> (
         #     point = system.positions[i,:];
@@ -141,12 +142,14 @@ function calculate_force!(system)
         end
     end
     system.forces = tmp
-    # system.forces = zeros(system.N, 3)
-    # i = 1
-    # for point in eachrow(system.positions)
-    #     system.forces[i,:] = calculate_force_helper!(system, system.root, point)
-    #     i = i + 1
-    # end
+    #=
+    system.forces = zeros(system.N, 3)
+    i = 1
+    for point in eachrow(system.positions)
+        system.forces[i,:] = calculate_force_helper!(system, system.root, point)
+        i = i + 1
+    end
+    =#
 end
 
 
@@ -218,7 +221,7 @@ function potential_energy_helper(system, node, point)
     end
 
     # define the vector between two point
-    distance_vec = .-(point .- node.center_of_mass)  # attractive energy
+    distance_vec = node.center_of_mass - point  # attractive energy
     distance = norm(distance_vec)
 
     if node.mass_count == 1
@@ -259,9 +262,12 @@ function remove_exceeds_masses(system)
     end
 end
 
+R2(x::Float64,y::Float64,z::Float64) = x^2+y^2+z^2
+R2(r::Array{Float64,1}) = r[1]^2+r[2]^2+r[3]^2
+R2(r::Array{Float64,2}) = @. r[:,1]^2+r[:,2]^2+r[:,3]^2
 function calculate_energy(mass_system::MassSystem)
     potential_energy = calculate_potential_energy(mass_system)/2    # no double counting
-    v_squre = mass_system.velocities[:,1] .^ 2 + mass_system.velocities[:,2] .^ 2 + mass_system.velocities[:,3] .^ 2
+    v_squre = R2(mass_system.velocities)
     kinectic_energy = 0.5 * mass_system.each_mass * sum(v_squre)
     [kinectic_energy, potential_energy]
 end
@@ -289,7 +295,8 @@ function start_cal(n, mass_system, t_span, abstol)
     kinetic_energy_of_lost_massess = []
     for i in 1:n
         println(i)
-        y_0 = get_current_values(mass_system)
+        y_0 = zeros(mass_system.N*6,1)
+        y_0[:] = get_current_values(mass_system)
         if length(y_0)/6 < N_INITIAL - count_dead
             count_dead = count_dead + 1
             println(count_dead, " particles are deads")
@@ -323,7 +330,7 @@ end
 function find_density(system::MassSystem)
     p = system.positions
     COM = system.root.center_of_mass
-    radii =  sqrt.((p[:,1] .- COM[1]).^2 .+(p[:,2] .- COM[2]).^2 .+(p[:,3] .- COM[3]).^2)
+    radii = @. sqrt((p[1,:] - COM[1])^2 +(p[2,:] - COM[2])^2 +(p[3,:] - COM[3])^2)
     find_density(radii)
 end
 function find_density(radii::Array{Float64,1})
@@ -349,12 +356,11 @@ function find_density(radii::Array{Float64,1})
     # density
     # fit
 end
-R2(x::Float64,y::Float64,z::Float64) = x^2+y^2+z^2
-R2(r::Array{Float64,1}) = r[1]^2+r[2]^2+r[3]^2
 #%%
+function run()
 # define parameters of calculation
 Random.seed!(1364)
-velocity = 60.
+velocity = 80.
 # mass_system = MassSystem(N_INITIAL,velocity)
 
 # for velocity in [80.] #[65., 80., 95.]
@@ -362,29 +368,29 @@ velocity = 60.
 tf = 80.
 n = ceil(Int, T_FINAL/tf)
 t_span = (0., tf)
-abstol = 100
+abstol = 100.
 
 # define the system
-global mass_system = MassSystem(N_INITIAL,velocity)
 mass_system.velocities .-= mean(mass_system.velocities, dims=1)
+mass_system = MassSystem(N_INITIAL,velocity)
 mass_system.root = build_tree!(mass_system)
 
 # start simulation
-n=2
+# n=2
 t = @elapsed all_positions, energy, lost_masses_energy = start_cal(n, mass_system, t_span, abstol)
 n = size(energy)[1]
-# #%%
-# # make a folder for saving the results
-# gr()
-# global folder = create_folder()
-# new_folder_rename = folder[1:end-1] * format("_eps_{}_N_mass_{}_repeat_ode_{}_v_{}_time_{:.2f}_m_jullia/",abstol,N_INITIAL,n,velocity,t/60)
-# mv(folder, new_folder_rename)
-# folder = new_folder_rename
-#
-# # save results to files
-# save(folder, mass_system, [energy, lost_masses_energy], ["energy", "lost_masses_energy"])
-# save_figures(1, all_positions, folder)
-# # py"gif_"(folder,"animated")
+#%%
+# make a folder for saving the results
+gr()
+global folder = create_folder()
+new_folder_rename = folder[1:end-1] * format("_eps_{}_N_mass_{}_repeat_ode_{}_v_{}_time_{:.2f}_m_jullia/",abstol,N_INITIAL,n,velocity,t/60)
+mv(folder, new_folder_rename)
+folder = new_folder_rename
+
+# save results to files
+save(folder, mass_system, [energy, lost_masses_energy], ["energy", "lost_masses_energy"])
+save_figures(1, all_positions, folder)
+# py"gif_"(folder,"animated")
 
 #%%
 # plot the graphs
@@ -433,3 +439,5 @@ total_energy2 = sum(energy.-lost_masses_energy, dims=2)
 # end
 # find_density(radii2)
 # find_density(mass_system)
+end
+# run()

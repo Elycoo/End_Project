@@ -1,26 +1,28 @@
-function make_solver(f, x_range, method, eps,p)
-    function ode(y_0)
+function make_solver(f::Function, x_range::Tuple{Float64,Float64}, method::String, eps::Float64,p::MassSystem)
+    function ode(y_0::Array{Float64,2})
         dim = length(y_0)
         y = zeros(dim,1)
-        x = [0.]
         y = y_0
-        x[1] = x_range[1]
+        x = [x_range[1]]
 
         h = eps
-        delta = eps * h / (x_range[2] - x_range[1])
-        eps_new = eps
+        delta::Float64 = eps * h / (x_range[2] - x_range[1])
+        eps_new::Float64 = eps
 
         i = 0
+        y1 = similar(y_0[:,1])
+        y2_tmp = similar(y_0[:,1])
+        y2 = similar(y_0[:,1])
         while x[end] < x_range[2]
             i = i + 1
             while true
-                global y1 = solve_small_step(f, x[i], y[:, i], h, method,p)
-                global y2_tmp = solve_small_step(f, x[i], y[:, i], h/2, method,p)
-                global y2 = solve_small_step(f, x[i]+h/2, y2_tmp, h/2, method,p)
+                y1[:] = solve_small_step(f, x[i], y[:, i], h, method,p)
+                y2_tmp[:] = solve_small_step(f, x[i], y[:, i], h/2, method,p)
+                y2[:] = solve_small_step(f, x[i]+h/2, y2_tmp, h/2, method,p)
 
-                dist_between_y1_y2 = maximum(abs.(y1 - y2))
+                dist_between_y1_y2::Float64 = maximum(abs.(y1 - y2))
                 if dist_between_y1_y2 < delta
-                    x = hcat(x, [x[end]+h])
+                    x = vcat(x, [x[end]+h])
 
                     if dist_between_y1_y2 > delta/2
                         # println("adjust h->0.9h")
@@ -61,17 +63,14 @@ function make_solver(f, x_range, method, eps,p)
     end
     return ode
 end
-function make_solver(f, x_range, method, eps)
-    make_solver(f, x_range, method, eps, nothing)
-end
 
-function solve_small_step(f, a, f_a, h, method,p)
-    if method == 1
-        y_new = f_a + h * f(a, f_a,p)
-    elseif method == 2
-        k = h * f(a, f_a,p)
-        y_new = f_a + h * f(a + h / 2, f_a + k / 2,p)
-    elseif method == "RK3"
+function solve_small_step(f::Function, a::Float64, f_a::Array{Float64,1}, h::Float64, method::String,p::MassSystem)::Array{Float64,1}
+    # if method == 1
+    #     y_new = f_a + h * f(a, f_a,p)
+    # elseif method == 2
+    #     k = h * f(a, f_a,p)
+    #     y_new = f_a + h * f(a + h / 2, f_a + k / 2,p)
+    if method == "RK3"
         k1 = h * f(a, f_a,p)
         k2 = h * f(a + h / 2, f_a + k1 / 2,p)
         k3 = h * f(a + h, f_a + 2 * k2 - k1,p)
