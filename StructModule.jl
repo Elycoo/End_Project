@@ -1,13 +1,14 @@
-using Distributed
+# using Distributed
+
 @everywhere module StructModule
-using Distributions
-using LinearAlgebra
+using Distributions: Normal
+using LinearAlgebra: norm, cross
 
 export Node, MassSystem
 
 const M_TOT = 1e11  # Sun masses
 const R_INITIAL = 50e3  # Parsec
-
+# R_INITIAL = 500.  # Parsec
 
 mutable struct Node
     borders::Array{Float64,2}
@@ -56,7 +57,14 @@ function MassSystem(N::Int64,velocity::Float64)
 
     d = Normal(0, velocity/sqrt(3) )
     # calculate velocities
-    velocities = rand(d, N, 3)
+    if N == 2
+        positions = rand()*[0 0 -R_INITIAL;0 0 R_INITIAL]
+        velocities = [0 velocity 0;0 -velocity 0]
+        println("change v, p")
+    else
+        velocities = rand(d,N,3)
+    end
+
     # initialize forces
     forces = zeros(N,3)
 

@@ -6,8 +6,8 @@ function scatter_(mass_system::MassSystem, cam=(40,50))
 end
 
 function scatter_(p::Array{Float64,2}, cam=(40,50))
-    scatter(p[:,1],p[:,2],p[:,3], camera = cam)
-    xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
+    Plots.scatter(p[:,1],p[:,2],p[:,3], camera = cam)
+    xlm = ylm = zlm = (-MAX_BOX_SIZE/30, MAX_BOX_SIZE/30)  # graph to reproduce the magnification from mousing
     xlims!(xlm[1], xlm[2])  # Reproduce magnification
     ylims!(ylm[1], ylm[2])
     zlims!(zlm[1], zlm[2])
@@ -72,6 +72,13 @@ function save_figures(num, save_positions, folder)
     gif(anim, folder*"gif.gif",fps=5);
 end
 
+function show_gif(save_positions,cam)
+    anim = @animate for p in save_positions
+        scatter_(p,cam)
+    end;
+	gif(anim, fps=5)
+end
+
 function create_folder()
     cd("/home/elyco/github/End_Project/")
     n = Dates.now()
@@ -98,4 +105,55 @@ function get_current_values(system)
     r = system.positions[:]
     v = system.velocities[:]
     vcat(r, v)
+end
+
+function calculate_potential_energy(system)
+    total_energy = 0.
+    i = 1
+    for point in eachrow(system.positions)
+        total_energy += potential_energy_helper(system, system.root, point)
+        i = i + 1
+    end
+    return total_energy
+end
+
+
+function potential_energy_helper(system, node, point)
+    """
+    Recursive function return the for acting on "point" from all the masses in "node"
+    """
+    energy = 0.
+
+    if node.mass_count == 0
+        # exit condition from the recursion
+        return energy
+    end
+
+    # define the vector between two point
+    distance_vec = node.center_of_mass - point  # attractive energy
+    distance = norm(distance_vec)
+
+    if node.mass_count == 1
+        # if just 1 mass so the energy is simply the energy between them
+        if distance == 0
+            # unless we are calculating for the same point
+            return energy  # [0., 0., 0.]
+        end
+        # compute and return the energy
+        return -GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
+    else
+        # mass_count >= 2
+        if distance / node.diagonal < THETA || point_in_box(point, node.borders)
+            # if too close we are need to get inside the recursion
+
+            for leaf in node.leafs
+                energy += potential_energy_helper(system, leaf, point)
+            end
+            return energy
+        else
+            # we don't need to go further just multiply the energy by the number of masses inside this node
+            return - GRAVITATIONAL_CONSTANT * system.each_mass ^ 2 / (distance + SOFT_PARAM)
+        end
+    end
+
 end
