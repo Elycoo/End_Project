@@ -1,5 +1,3 @@
-# MAX_BOX_SIZE = 666e3  # Parsec
-
 function scatter_(mass_system::MassSystem, cam=(40,50))
     p = mass_system.positions
     scatter_(p, cam)
@@ -12,12 +10,8 @@ function scatter_(p::Array{Float64,2}, cam=(40,50))
     ylims!(ylm[1], ylm[2])
     zlims!(zlm[1], zlm[2])
 end
-##
 
 
-macro Name(arg)
-    string(arg)
-end
 function save(folder, system, args...)
     fold = string(folder,"MassSystem/")
     mkdir(fold)
@@ -169,7 +163,6 @@ function potential_energy_helper(system, node, point)
 
 end
 
-
 # using Peaks
 function check_kepler_third_law()
 	ratio = zeros(1)
@@ -231,3 +224,25 @@ no_correction = 0.9996824314578093
 ratio = [0.9948236845203343]
 =#
 end
+
+
+function get_more_data_to_average()
+    println("finished to calculate system start on average")
+    t_span = (0., tf*3)
+    n = 50
+
+    all_positions, energy, lost_masses = start_cal(mass_system, sim_data)
+
+    radii = []
+    for pos in all_positions
+        COM = mean(pos, dims=1)[1,:]
+        push!(radii, sqrt.((pos[:,1] .- COM[1]).^2 .+(pos[:,2] .- COM[2]).^2 .+(pos[:,3] .- COM[3]).^2) )
+    end
+    radii2 = vcat(radii...)
+    fold = string(folder,"MassSystem/")
+    open(fold*"radii2.txt", "w") do io
+        write(io, JSON.json(radii2))
+    end
+    find_density(radii2)
+    find_density(mass_system)
+end # function get_more_data_to_average

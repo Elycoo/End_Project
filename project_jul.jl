@@ -420,28 +420,6 @@ function find_density(radii::Array{Float64,1}; save_data=false, folder="")
     # density
     # fit
 end
-#%%
-
-function get_more_data_to_average()
-    println("finished to calculate system start on average")
-    t_span = (0., tf*3)
-    n = 50
-
-    all_positions, energy, lost_masses = start_cal(mass_system, sim_data)
-
-    radii = []
-    for pos in all_positions
-        COM = mean(pos, dims=1)[1,:]
-        push!(radii, sqrt.((pos[:,1] .- COM[1]).^2 .+(pos[:,2] .- COM[2]).^2 .+(pos[:,3] .- COM[3]).^2) )
-    end
-    radii2 = vcat(radii...)
-    fold = string(folder,"MassSystem/")
-    open(fold*"radii2.txt", "w") do io
-        write(io, JSON.json(radii2))
-    end
-    find_density(radii2)
-    find_density(mass_system)
-end # function check_kepler_third_law
 
 using Main: calculate_force_helper!,point_in_box
 
