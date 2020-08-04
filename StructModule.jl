@@ -4,11 +4,10 @@
 using Distributions: Normal
 using LinearAlgebra: norm, cross
 
-export Node, MassSystem
+export Node, MassSystem, SimData
 
 const M_TOT = 1e11  # Sun masses
 const R_INITIAL = 50e3  # Parsec
-# R_INITIAL = 500.  # Parsec
 
 mutable struct Node
     borders::Array{Float64,2}
@@ -73,6 +72,16 @@ function MassSystem(N::Int64,velocity::Float64)
     system = MassSystem(N,each_mass,positions,velocities,forces,root)
     # system.root = build_tree!(system)
     system
+end
+
+mutable struct SimData
+    t_span::Tuple{Float64,Float64}
+    n::Int64
+    abstol::Float64
+    folder::String
+end # mutable struct
+function SimData(t_span, n, abstol)
+    SimData(t_span, n, abstol,"")
 end
 
 end

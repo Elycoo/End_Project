@@ -7,7 +7,7 @@ end
 
 function scatter_(p::Array{Float64,2}, cam=(40,50))
     Plots.scatter(p[:,1],p[:,2],p[:,3], camera = cam)
-    xlm = ylm = zlm = (-MAX_BOX_SIZE/30, MAX_BOX_SIZE/30)  # graph to reproduce the magnification from mousing
+    xlm = ylm = zlm = (-MAX_BOX_SIZE/3, MAX_BOX_SIZE/3)  # graph to reproduce the magnification from mousing
     xlims!(xlm[1], xlm[2])  # Reproduce magnification
     ylims!(ylm[1], ylm[2])
     zlims!(zlm[1], zlm[2])
@@ -37,6 +37,16 @@ function save(folder, system, args...)
         end
     end
 end
+"""
+	load(folder, args...)
+
+# Use it as follow:
+```julia-repl
+julia> folder = "/path/to/some/folder"; # that contain the relevant MassSystem data
+julia> mass_system, sim_data, enr, los_enr = BranesHut.load(folder,"energy","lost_masses_energy");
+```
+
+"""
 function load(folder, args...)
     system = MassSystem(1,1.)
 
@@ -47,7 +57,7 @@ function load(folder, args...)
     args_out = []
     for var_name in args
         var = JSON.parse(open(f->read(f, String), fold*var_name*".txt"))
-        push!(args_out, var)
+        push!(args_out, hcat(var...))
     end
 
 
@@ -59,7 +69,8 @@ function load(folder, args...)
     system.forces = zeros(system.N, 3)
 
     system.root = build_tree!(system)
-    system, args_out...
+	sim_data = SimData((0.,80.), length(args_out[1][:,1]), 100., folder)
+    system, sim_data, args_out...
 end
 
 function save_figures(num, save_positions, folder)
@@ -156,4 +167,67 @@ function potential_energy_helper(system, node, point)
         end
     end
 
+end
+
+
+# using Peaks
+function check_kepler_third_law()
+	ratio = zeros(1)
+	for i in 1:length(ratio)
+	    seed!(1243333333)
+		# prepare system
+	    velocity = 15.6
+	    mass_system = MassSystem(N_INITIAL,velocity)
+	    mass_system.positions = rand()*[0 0 -R_INITIAL;0 0 R_INITIAL]*20
+	    mass_system.velocities = [0 velocity 0;0 -velocity 0]
+	    mass_system.velocities .-= mean(mass_system.velocities, dims=1)
+	    mass_system.root = build_tree!(mass_system)
+
+	    # start simulation
+		dof = mass_system.N*6
+	    tf = 400000.
+	    t_span = (0.,tf)
+	    abstol = .01
+
+	    y_0 = zeros(mass_system.N*6,1)
+	    y_0[:] = get_current_values(mass_system)
+	    ode_solver = make_solver(ode_to_solve_my_RK, t_span, "RK4", abstol, mass_system)
+	    time_series, y = ode_solver(y_0)
+		y = [reshape(a[:],mass_system.N, 3) for a in eachcol(y[1:Int(dof//2),:])]
+
+		# analyze results
+	    r = sqrt.(R2.([p[1,:]-p[2,:] for p in y]))
+	    peaks = maxima(r)
+	    mins = minima(r)
+	    a = (r[peaks[1]] + r[mins[1]])/2
+	    T = mean([time_series[peaks[1]] - time_series[peaks[2]] ; time_series[mins[1]] - time_series[mins[2]]])
+
+		# compare to knonw value
+	    rat = GRAVITATIONAL_CONSTANT*M_TOT*T^2/a/(a+SOFT_PARAM)^2/4/pi^2
+	    no_correction = GRAVITATIONAL_CONSTANT*M_TOT*T^2/a^3/4/pi^2
+	    ratio[i] = rat
+		@show no_correction
+
+		#  plot and animate
+		plo = plot(time_series, r, legend=:bottomright)
+	    scatter!(time_series[peaks], r[peaks])
+	    scatter!(time_series[mins], r[mins])
+	    inds = floor.(Int,collect(range(1,stop=length(y),length=100)))
+	    anim = show_gif(y[inds],(40,70))
+	    display(anim)
+	    display(plo)
+	end
+	@show ratio
+
+#=
+results for these configuration:
+seed!(1243333333)
+mass_system.positions = rand()*[0 0 -R_INITIAL;0 0 R_INITIAL]*20
+velocity = 15.6
+tf = 400000.
+abstol = .01
+
+no_correction = 0.9996824314578093
+ratio = [0.9948236845203343]
+=#
 end
