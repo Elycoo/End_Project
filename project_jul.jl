@@ -278,6 +278,8 @@ function start_cal(mass_system::MassSystem, sim_data)
 
         # calcuate the energy difference before and after we remove the exceeded masses
         energy_before = calculate_energy(mass_system)
+                        # TODO: consider the check the after energy just if there are masses that removed
+                        # TODO: and the energy calculaion can pararlized too
         remove_exceeds_masses(mass_system)
         energy_after = calculate_energy(mass_system)
         energy_lost = energy_after .- energy_before
