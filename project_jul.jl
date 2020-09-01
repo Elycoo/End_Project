@@ -2,7 +2,7 @@
 #%%
 #=
 project_jul:
-- Julia version: 1.0.4
+- Julia version: 1.5.0
 - Author: elyco
 - Date: 2020-07-19
 =#
@@ -339,7 +339,6 @@ function run(;velocity = 80., save_data=true)
     end
     return mass_system, sim_data, all_positions, energy, lost_masses_energy
 end # run
-
 #%%
 function run_energy_graphs(sim_data, all_positions, energy, lost_masses_energy; save_data=false)
     # plot the graphs
@@ -387,42 +386,62 @@ function find_density(system::MassSystem; save_data=false, folder="")
     radii = @. sqrt((p[:,1] - COM[1])^2 +(p[:,2] - COM[2])^2 +(p[:,2] - COM[3])^2)
     find_density(radii, save_data=false, folder=folder)
 end
+
 function find_density(radii::Array{Float64,1}; save_data=false, folder="")
     gr()
-    xdata = range(minimum(radii), maximum(radii),length=10^3)
-    xdata = range(minimum(radii), 10. ^5.5,length=5*10^2)
+    xdata = range(minimum(radii), maximum(radii),length=5*10^2)
+    # xdata = range(minimum(radii), 10. ^5.5,length=5*10^2)
     p = kde(radii)
     ydata = pdf(p,xdata)
-    # inds = [i for i in 1:length(ydata) if ydata[i]>0 && xdata[i]<10^5]
-    # xdata = xdata[inds]
-    # ydata = ydata[inds]
-
+    inds = [i for i in 1:length(ydata) if ydata[i]>0 && xdata[i]<10^5.5]
+    xdata = xdata[inds]
+    ydata = ydata[inds]
 
     # curve_fit
-    @. model(x, p) =  p[1]*x^2/(1 + (x/p[2])^p[3] )^(p[4])
-    p0 = [1e-5,10^4.7,5.13,2.2]
-    p0 = [1e-14, 4e4, 2.1, 3.05]
-    p0=[6.52e-10, 7.1e+04, 1., 7.]
-    p0 = [1.e-13, 159040., 1., 14.] #[1.102829573732584e-13, 159040.00000000675, 1.0015000953676354, 13.999914095981763]
-    p0 = [1.e-13, 159040., 2., 2.5] #[9.670895322014411e-14, 75887.91935011698, 1.4498570607553147, 6.835788293565527]
-    p0 = [1.e-13, 159040., 2., 2.5]
+    # @. model(x, p) =  p[1]*x^2/(1 + (x/p[2])^p[3] )^(p[4])
+    # p0 = [1e-5,10^4.7,5.13,2.2]
+    # p0 = [1e-14, 4e4, 2.1, 3.05]
+    # p0=[6.52e-10, 7.1e+04, 1., 7.]
+    # p0 = [1.e-13, 159040., 1., 14.] #[1.102829573732584e-13, 159040.00000000675, 1.0015000953676354, 13.999914095981763]
+    # p0 = [1.e-13, 159040., 2., 2.5] #[9.670895322014411e-14, 75887.91935011698, 1.4498570607553147, 6.835788293565527]
+    # p0 = [1.e-13, 159040., 2., 2.5]
+    # p0 = [1., 100000., 2., 14.]
+    #
+    # lb = [0 ,0.,0.,0.]  # lower bound
+    # # ub = [1 ,1e6,3.,3.]  # upper bound
+    # ub = [Inf ,Inf,Inf,Inf]  # upper bound
+    # fit = curve_fit(model, xdata, ydata, p0 ,lower=lb,upper=ub)
 
-    lb = [0 ,0.,0.,0.]  # lower bound
-    # ub = [1 ,1e6,3.,3.]  # upper bound
-    ub = [Inf ,Inf,Inf,Inf]  # upper bound
+    α=2.
+    β=2.5
+    # α = 1.170978892990167
+    # β = 15.496487531262101
+    @. model(x, p) = p[1]*x^2/(1 + (x/p[2])^α )^β
+
+    @show α, β
+    p0 = [1., 100000.]
+    lb = [0 ,0.]  # lower bound
+    # ub = [1 ,1e6]  # upper bound
+    ub = [Inf ,Inf]  # upper bound
     fit = curve_fit(model, xdata, ydata, p0 ,lower=lb,upper=ub)
+
     println(fit.param)
     println(sum(fit.resid.^2))
 
-    plo = plot(xdata, ydata, xaxis=:log,yaxis=:log, marker="o", label="simulation")
+    plo = scatter(xdata, ydata, xaxis=:log,yaxis=:log,
+                marker=(:circle),
+                # line=:none,
+                label="simulation",
+                legend=:bottomleft)
     # plo = plot(xdata,ydata, marker="o", label="simulation")
     plot!(xdata, model(xdata,fit.param), label="fit")
     save_data && savefig(folder*"king"*string(fit.param...)*".png")
     plo
     # density
     # fit
+    # @show trapz(xdata,ydata)
 end
-
+using Trapz
 using Main: calculate_force_helper!,point_in_box
 
 end  # module BranesHut
@@ -434,3 +453,161 @@ function run_all()
         BranesHut.find_density(mass_system, save_data=true, folder=sim_data.folder)
     end
 end
+using Plots
+# using LaTeXStrings
+#=
+function arange_plots_epsilon()
+    folder = "C:/Users/owner/Documents/Branes hut results/results/epsilon check different epsilon/"
+    default(titlefontsize = 18,
+            legendfontsize = 15,
+            guidefontsize = 15,
+            tickfontsize = 12)
+    energy_plt = plot(title="Rel. error of Energy Conservation")
+    virial_plt = plot(title="Virial Thm. relation -2Eₖ/Eₚ")
+    for fold in readdir(folder)
+        if !isdir(folder*fold)
+            continue
+        end
+        println(fold)
+        ind = findfirst("eps_",fold)[end] + 1
+        ind_ = findnext("_", fold, ind)[1]
+        abstol = parse(Float64,fold[ind:ind_-1])
+        mass_system, sim_data, energy, lost_masses_energy = BranesHut.load(folder*fold*"/","energy","lost_masses_energy");
+
+        tf = sim_data.t_span[2]
+
+        time_series = (0:sim_data.n-1) .* tf
+        total_energy1 = sum(energy, dims=2)
+        total_energy2 = sum(energy.-lost_masses_energy, dims=2)
+        plot!(energy_plt, time_series, -1 .+ total_energy2 ./ total_energy2[1], label=string("eps=",Int64(abstol)))
+        xlabel!("t"*" [astrnumical units]")
+
+        plot!(virial_plt,
+                time_series,
+                -2 .* (energy[:,1] .- lost_masses_energy[:,1]) ./ (energy[:,2] .- lost_masses_energy[:,2]),
+                label=string("eps=",Int(abstol)))
+
+        xlabel!("t"*" [astrnumical units]")
+    end
+    save_data = true
+    save_data && savefig(energy_plt, folder*"energy_new.png")
+    save_data && savefig(virial_plt, folder*"ratio_new.png")
+
+    display(energy_plt)
+    display(virial_plt)
+end # function arange_plots_epsilon
+
+function arange_plots_theta()
+    folder = "C:/Users/owner/Documents/Branes hut results/results/theta/"
+    default(titlefontsize = 18,
+            legendfontsize = 15,
+            guidefontsize = 15,
+            tickfontsize = 12)
+    energy_plt = plot(title="Rel. error of Energy Conservation")
+    virial_plt = plot(title="Virial Thm. relation -2Eₖ/Eₚ")
+    for fold in readdir(folder)
+        if !isdir(folder*fold)
+            continue
+        end
+        sub_fold = readdir(folder*fold*"/")[1]
+        # println(fold)
+        # println(sub_fold)
+        ind = findfirst("theta_",fold)[end] + 1
+        ind_ = findnext(" ", fold, ind)[1]
+        theta = parse(Int64,fold[ind:ind_-1])
+        mass_system, sim_data, energy, lost_masses_energy = BranesHut.load(folder*fold*"/"*sub_fold*"/","energy","lost_masses_energy");
+
+        tf = sim_data.t_span[2]
+
+        time_series = (0:sim_data.n-1) .* tf
+        total_energy1 = sum(energy, dims=2)
+        total_energy2 = sum(energy.-lost_masses_energy, dims=2)
+        plot!(energy_plt,
+              time_series, abs.(-1 .+ total_energy2 ./ total_energy2[1]),
+              label=string("θ=",theta),
+              yticks=[0.0,0.05,0.2,0.4,0.6,-0.2,-0.4,-0.6],)
+        xlabel!("t"*" [astrnumical units]")
+
+        plot!(virial_plt,
+                time_series,
+                -2 .* (energy[:,1] .- lost_masses_energy[:,1]) ./ (energy[:,2] .- lost_masses_energy[:,2]),
+                label=string("θ=",theta),
+                yticks=[0, 1,2,4,6],
+                ylim=[0,7])
+        xlabel!("t"*" [astrnumical units]")
+    end
+    save_data = true
+    plot!(virial_plt, [0, 2e5], [1,1], line=(:black,0.65,:dash),label="")
+    xlims!((-612.0, 21012.0))
+    plot!(energy_plt, [0, 2e5], [0,0], line=(:black,0.65,:dash),label="")
+    xlims!((-612.0, 21012.0))
+    save_data && savefig(energy_plt, folder*"energy_new.png")
+    save_data && savefig(virial_plt, folder*"ratio_new.png")
+
+    display(energy_plt)
+    display(virial_plt)
+end # function arange_plots_theta
+=#
+function arange_plots_king()
+    folder = "C:/Users/owner/Documents/Branes hut/results/Theta 10 5000/"
+    folder = "C:/Users/owner/Documents/Branes hut/results/5000_masses_parrallel_theta_1/"
+    default(titlefontsize = 18,
+            legendfontsize = 15,
+            guidefontsize = 15,
+            tickfontsize = 12)
+    king_plts = []
+    for fold in readdir(folder)
+        if !isdir(folder*fold)
+            continue
+        end
+        # println(fold)
+        # println(sub_fold)
+        ind = findfirst("_v_",fold)[end] + 1
+        ind_ = findnext("_", fold, ind)[1]
+        velocity = Int64(parse(Float64,fold[ind:ind_-1]))
+        mass_system, sim_data, energy, lost_masses_energy = BranesHut.load(folder*fold*"/","energy","lost_masses_energy");
+
+
+        king_plt = BranesHut.find_density(mass_system)
+        if velocity == 65
+            title!("v="*string(velocity))
+        else
+            title!("v="*string(velocity))
+        end
+        push!(king_plts, (king_plt, velocity))
+    end
+    save_data = true
+    for (plt,v) = king_plts
+        save_data && savefig(plt, folder*"king_v_"*string(v)*".png")
+        display(plt)
+    end
+    plot([tup[1] for tup in king_plts]..., layout=(1,3),size=(1200,500),bottommargin = 10px)
+    display(current())
+    save_data && savefig(folder*"king_v_all.png")
+end # function arange_plots_king
+
+#%%
+(α, β) = (2, 2.5)
+a = [2.3651460048170533e-13 23799.75151410114;
+# 1.0035746984932837e-10
+8.007047118514466e-14 34274.549918442004;
+# 5.1467324712358616e-11
+2.6029150357004136e-14 47750.8176403658]
+# 2.5631062896548546e-11
+
+# [2.36515e-13  23799.8;
+#  8.00705e-14  34274.5;
+#  2.60292e-14  47750.8]
+
+#%%
+(α, β) = (1.170978892990167, 15.496487531262101)
+[3.419372904885111e-13 124263.58280424828;
+# 3.8509425973482815e-11
+1.1689651825688522e-13 178328.0219051083;
+# 7.292271829391736e-12
+3.9168700945470973e-14 244935.1201844184]
+# 3.3421744501272296e-11
+
+3.41937e-13  124264.0
+1.16897e-13  178328.0
+3.91687e-14  244935.0
