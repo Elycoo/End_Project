@@ -74,7 +74,7 @@ function save_figures(num, save_positions, folder)
         Plots.savefig(string(folder,i,".png"))
         i = i + 1
     end;
-    gif(anim, folder*"gif.gif",fps=5);
+    gif(anim, folder*"gif.gif",fps=5)
 end
 
 function show_gif(save_positions,cam)
@@ -85,7 +85,9 @@ function show_gif(save_positions,cam)
 end
 
 function create_folder()
-    cd("/home/elyco/github/End_Project/")
+	if !Sys.iswindows()
+    	cd("/home/elyco/github/End_Project/")
+	end
     n = Dates.now()
     now = Dates.now()
     day = Dates.format(n, "mm_dd")
